@@ -102,6 +102,28 @@
                                 </div>
                             </div>
                             
+                            {% if meeting.is_recurring %}
+                            <div class="row">
+                                <div class="col-md-12 mb-3">
+                                    <div class="card border-warning">
+                                        <div class="card-header bg-warning text-dark">
+                                            <h6 class="mb-0">
+                                                <i class="bi bi-arrow-repeat me-2"></i>Reunião Recorrente
+                                            </h6>
+                                        </div>
+                                        <div class="card-body">
+                                            {{ form.edit_all_recurring.label(class="form-label") }}
+                                            {{ form.edit_all_recurring(class="form-select") }}
+                                            <div class="form-text">
+                                                <i class="bi bi-info-circle me-1"></i>
+                                                Escolha se as alterações devem ser aplicadas apenas a esta reunião ou a toda a série recorrente.
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endif %}
+                            
                             <div class="d-flex justify-content-between">
                                 <a href="{{ url_for('meetings.my_meetings') }}" class="btn btn-secondary">
                                     <i class="bi bi-arrow-left me-1"></i>Cancelar
