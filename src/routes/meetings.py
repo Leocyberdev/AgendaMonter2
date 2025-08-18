@@ -87,8 +87,8 @@ def create_recurring_meetings(base_meeting):
             if base_meeting.recurrence_type == 'daily':
                 if current_date.weekday() >= 5:  # 5=sábado, 6=domingo
                     continue
-            new_start_datetime = BRAZIL_TZ.localize(datetime.combine(current_date, start_time_of_day))
-            new_end_datetime = BRAZIL_TZ.localize(datetime.combine(current_date, end_time_of_day))
+            new_start_datetime = datetime.combine(current_date, start_time_of_day, tzinfo=BRAZIL_TZ)
+            new_end_datetime = datetime.combine(current_date, end_time_of_day, tzinfo=BRAZIL_TZ)
 
             is_available, _ = check_room_availability(
                 base_meeting.room_id, new_start_datetime, new_end_datetime
@@ -392,8 +392,8 @@ def edit_meeting(meeting_id):
                     meeting_to_update.room_id = form.room_id.data
                 else:
                     # Reuniões filhas - aplica a diferença de tempo
-                    new_start = meeting_to_update.start_datetime + time_diff
-                    new_end = meeting_to_update.end_datetime + time_diff
+                    new_start = make_timezone_aware(meeting_to_update.start_datetime + time_diff, BRAZIL_TZ)
+                    new_end = make_timezone_aware(meeting_to_update.end_datetime + time_diff, BRAZIL_TZ)
                     
                     # Verifica disponibilidade da sala para cada reunião filha
                     is_child_available, _ = check_room_availability(
