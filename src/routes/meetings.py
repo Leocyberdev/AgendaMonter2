@@ -244,8 +244,7 @@ def create_meeting():
                 try:
                     if new_meeting.is_recurring:
                         subject_suffix = f" (Recorrente até {new_meeting.recurrence_end.strftime('%d/%m/%Y')})"
-                        body_suffix = f"
-Esta é uma reunião recorrente que se repete {new_meeting.recurrence_type} até {new_meeting.recurrence_end.strftime('%d/%m/%Y')}."
+                        body_suffix = f"Esta é uma reunião recorrente que se repete {new_meeting.recurrence_type} até {new_meeting.recurrence_end.strftime('%d/%m/%Y')}."
                     else:
                         subject_suffix = ""
                         body_suffix = ""
