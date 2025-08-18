@@ -18,6 +18,7 @@ from src.forms import MeetingForm, EditMeetingForm
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 from zoneinfo import ZoneInfo
+import pytz
 import json
 
 meetings_bp = Blueprint("meetings", __name__)
@@ -40,7 +41,7 @@ def check_room_availability(room_id, start_datetime, end_datetime, exclude_meeti
     return len(conflicts) == 0, conflicts
 
 
-# --- FUNÇÃO CORRIGIDA ---
+# --- FUNÇÃO CORRIGIDA COM PYTZ ---
 def create_recurring_meetings(base_meeting, fixed_start_time, fixed_end_time):
     if not base_meeting.is_recurring or not base_meeting.recurrence_type:
         return []
@@ -51,17 +52,32 @@ def create_recurring_meetings(base_meeting, fixed_start_time, fixed_end_time):
 
     created_meetings = []
 
-    # Usamos os horários originais passados da view
-    current_date = base_meeting.start_datetime.date()
+    # Garantir que estamos trabalhando com timezone do Brasil
+    brazil_tz = pytz.timezone('America/Sao_Paulo')
+    
+    # Converter para timezone do Brasil se necessário
+    if base_meeting.start_datetime.tzinfo is None:
+        base_start = brazil_tz.localize(base_meeting.start_datetime)
+    else:
+        base_start = base_meeting.start_datetime.astimezone(brazil_tz)
+    
+    current_date = base_start.date()
     start_hour, start_minute, start_second = fixed_start_time.hour, fixed_start_time.minute, fixed_start_time.second
     end_hour, end_minute, end_second = fixed_end_time.hour, fixed_end_time.minute, fixed_end_time.second
 
     try:
-        end_date = datetime.combine(
-            base_meeting.recurrence_end,
-            datetime.min.time(),
-            tzinfo=BRAZIL_TZ
-        )
+        # Garantir que a data de fim está no timezone correto
+        if isinstance(base_meeting.recurrence_end, datetime):
+            if base_meeting.recurrence_end.tzinfo is None:
+                end_date = brazil_tz.localize(base_meeting.recurrence_end)
+            else:
+                end_date = base_meeting.recurrence_end.astimezone(brazil_tz)
+        else:
+            # Se for apenas uma data, combinar com horário mínimo
+            end_date = brazil_tz.localize(datetime.combine(
+                base_meeting.recurrence_end,
+                datetime.min.time()
+            ))
     except Exception as e:
         print(f"❌ Erro ao processar data de fim da recorrência: {e}")
         return []
@@ -87,17 +103,15 @@ def create_recurring_meetings(base_meeting, fixed_start_time, fixed_end_time):
                 if current_date.weekday() >= 5:  # pula sábado e domingo
                     continue
 
-            # Fixamos os horários originais
-            new_start_datetime = datetime(
+            # Criar datetime com timezone correto
+            new_start_datetime = brazil_tz.localize(datetime(
                 current_date.year, current_date.month, current_date.day,
-                start_hour, start_minute, start_second,
-                tzinfo=BRAZIL_TZ
-            )
-            new_end_datetime = datetime(
+                start_hour, start_minute, start_second
+            ))
+            new_end_datetime = brazil_tz.localize(datetime(
                 current_date.year, current_date.month, current_date.day,
-                end_hour, end_minute, end_second,
-                tzinfo=BRAZIL_TZ
-            )
+                end_hour, end_minute, end_second
+            ))
 
             is_available, _ = check_room_availability(
                 base_meeting.room_id, new_start_datetime, new_end_datetime
@@ -127,6 +141,22 @@ def create_recurring_meetings(base_meeting, fixed_start_time, fixed_end_time):
     print(f"✅ Processadas {iteration_count} iterações, criadas {len(created_meetings)} reuniões")
     return created_meetings
 # --- FIM DA FUNÇÃO CORRIGIDA ---
+
+
+def format_datetime_brazil(dt):
+    """Função auxiliar para formatar datetime com timezone do Brasil"""
+    if dt is None:
+        return ""
+    
+    brazil_tz = pytz.timezone('America/Sao_Paulo')
+    
+    # Garantir que o datetime tem timezone
+    if dt.tzinfo is None:
+        dt = brazil_tz.localize(dt)
+    else:
+        dt = dt.astimezone(brazil_tz)
+    
+    return dt
 
 
 @meetings_bp.route('/dashboard')
@@ -242,9 +272,18 @@ def create_meeting():
 
             if participant_emails:
                 try:
+                    # CORREÇÃO: Usar datetime com pytz ao invés de strftime
+                    start_dt_brazil = format_datetime_brazil(new_meeting.start_datetime)
+                    end_dt_brazil = format_datetime_brazil(new_meeting.end_datetime)
+                    
                     if new_meeting.is_recurring:
-                        subject_suffix = f" (Recorrente até {new_meeting.recurrence_end.strftime('%d/%m/%Y')})"
-                        body_suffix = f"Esta é uma reunião recorrente que se repete {new_meeting.recurrence_type} até {new_meeting.recurrence_end.strftime('%d/%m/%Y')}."
+                        recurrence_end_brazil = format_datetime_brazil(
+                            datetime.combine(new_meeting.recurrence_end, datetime.min.time()) 
+                            if isinstance(new_meeting.recurrence_end, type(datetime.now().date())) 
+                            else new_meeting.recurrence_end
+                        )
+                        subject_suffix = f" (Recorrente até {recurrence_end_brazil.strftime('%d/%m/%Y')})"
+                        body_suffix = f"Esta é uma reunião recorrente que se repete {new_meeting.recurrence_type} até {recurrence_end_brazil.strftime('%d/%m/%Y')}."
                     else:
                         subject_suffix = ""
                         body_suffix = ""
@@ -253,8 +292,8 @@ def create_meeting():
 Uma nova reunião foi agendada:
 
 Título: {new_meeting.title}{subject_suffix}
-Data: {new_meeting.start_datetime.strftime('%d/%m/%Y')}
-Horário: {new_meeting.start_datetime.strftime('%H:%M')} - {new_meeting.end_datetime.strftime('%H:%M')}
+Data: {start_dt_brazil.strftime('%d/%m/%Y')}
+Horário: {start_dt_brazil.strftime('%H:%M')} - {end_dt_brazil.strftime('%H:%M')}
 Local: {new_meeting.room.name}
 Organizador: {new_meeting.creator.username}
 
@@ -277,10 +316,6 @@ Sistema de Reuniões - Monter Elétrica
 
         flash("Reunião agendada com sucesso!", "success")
         return redirect(url_for("meetings.dashboard"))
-
-    users = User.query.all()
-    rooms = Room.query.all()
-    return render_template('meetings/create.html', user=user, rooms=rooms, form=form)
 
     users = User.query.all()
     rooms = Room.query.all()
@@ -342,7 +377,13 @@ def edit_meeting(meeting_id):
             form.room_id.data, start_time, end_time, exclude_meeting_id=meeting.id
         )
         if not is_available:
-            conflict_info = [f"{c.title} ({c.start_datetime.strftime('%H:%M')} - {c.end_datetime.strftime('%H:%M')})" for c in conflicts]
+            # CORREÇÃO: Usar datetime com pytz ao invés de strftime
+            conflict_info = []
+            for c in conflicts:
+                start_brazil = format_datetime_brazil(c.start_datetime)
+                end_brazil = format_datetime_brazil(c.end_datetime)
+                conflict_info.append(f"{c.title} ({start_brazil.strftime('%H:%M')} - {end_brazil.strftime('%H:%M')})")
+            
             flash(f"Sala não disponível. Conflitos: {', '.join(conflict_info)}", "error")
             return render_template("meetings/edit.html", form=form, meeting=meeting)
 
@@ -411,94 +452,44 @@ def check_availability():
     exclude_meeting_id = request.args.get('exclude_meeting_id', type=int)
 
     if not all([room_id, start_datetime, end_datetime]):
-        return jsonify({'error': 'Parâmetros obrigatórios não fornecidos'}), 400
+        return jsonify({'available': False, 'error': 'Parâmetros obrigatórios não fornecidos'})
 
     try:
-        start_dt = datetime.fromisoformat(start_datetime)
-        end_dt = datetime.fromisoformat(end_datetime)
-
-        start_dt = make_timezone_aware(start_dt, BRAZIL_TZ)
-        end_dt = make_timezone_aware(end_dt, BRAZIL_TZ)
-
+        start_dt = parse_datetime_from_input(start_datetime)
+        end_dt = parse_datetime_from_input(end_datetime)
+        
         is_available, conflicts = check_room_availability(room_id, start_dt, end_dt, exclude_meeting_id)
-
-        conflict_details = [{
-            'title': c.title,
-            'start': c.start_datetime.isoformat(),
-            'end': c.end_datetime.isoformat()
-        } for c in conflicts]
-
-        return jsonify({'available': is_available, 'conflicts': conflict_details})
-
+        
+        conflict_list = []
+        for conflict in conflicts:
+            # CORREÇÃO: Usar datetime com pytz ao invés de strftime
+            start_brazil = format_datetime_brazil(conflict.start_datetime)
+            end_brazil = format_datetime_brazil(conflict.end_datetime)
+            conflict_list.append({
+                'title': conflict.title,
+                'start': start_brazil.strftime('%H:%M'),
+                'end': end_brazil.strftime('%H:%M')
+            })
+        
+        return jsonify({
+            'available': is_available,
+            'conflicts': conflict_list
+        })
     except Exception as e:
-        return jsonify({'error': str(e)}), 400
+        return jsonify({'available': False, 'error': str(e)})
 
 
-@meetings_bp.route('/api/meeting_details/<int:meeting_id>')
+@meetings_bp.route('/cancel_recurrence/<int:meeting_id>', methods=['POST'])
 @login_required
-def meeting_details(meeting_id):
-    meeting = Meeting.query.get_or_404(meeting_id)
-
-    start_dt = ensure_timezone_aware(meeting.start_datetime)
-    end_dt = ensure_timezone_aware(meeting.end_datetime)
-
-    return jsonify({
-        'id': meeting.id,
-        'title': meeting.title,
-        'description': meeting.description,
-        'start_datetime': start_dt.isoformat(),
-        'end_datetime': end_dt.isoformat(),
-        'participants': meeting.participants,
-        'room_name': meeting.room.name,
-        'creator_name': meeting.creator.username,
-        'is_recurring': meeting.is_recurring,
-        'recurrence_type': meeting.recurrence_type,
-        'recurrence_end': meeting.recurrence_end.isoformat() if meeting.recurrence_end else None,
-        'parent_meeting_id': meeting.parent_meeting_id
-    })
-
-
-@meetings_bp.route('/api/suggest_rooms')
-@login_required
-def suggest_rooms():
-    start_datetime = request.args.get('start_datetime')
-    end_datetime = request.args.get('end_datetime')
-
-    if not all([start_datetime, end_datetime]):
-        return jsonify({'error': 'Parâmetros obrigatórios não fornecidos'}), 400
-
-    try:
-        start_dt = datetime.fromisoformat(start_datetime)
-        end_dt = datetime.fromisoformat(end_datetime)
-
-        start_dt = make_timezone_aware(start_dt, BRAZIL_TZ)
-        end_dt = make_timezone_aware(end_dt, BRAZIL_TZ)
-
-        available_rooms = []
-        all_rooms = Room.query.filter_by(is_active=True).all()
-
-        for room in all_rooms:
-            is_available, _ = check_room_availability(room.id, start_dt, end_dt)
-            if is_available:
-                available_rooms.append(room.to_dict())
-
-        return jsonify({'available_rooms': available_rooms})
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
-
-
-@meetings_bp.route('/delete_series/<int:parent_id>', methods=['POST'])
-@login_required
-def delete_recurring_series(parent_id):
-    original = Meeting.query.get_or_404(parent_id)
-
+def cancel_recurrence(meeting_id):
+    original = Meeting.query.get_or_404(meeting_id)
+    
     if original.created_by != current_user.id and not current_user.is_admin:
-        flash('Você não tem permissão para deletar esta série de reuniões.', 'error')
+        flash('Você não tem permissão para cancelar esta recorrência.', 'error')
         return redirect(url_for('meetings.my_meetings'))
 
-    recurring = Meeting.query.filter_by(parent_meeting_id=parent_id).all()
-
+    recurring = Meeting.query.filter_by(parent_meeting_id=meeting_id).all()
+    
     for m in recurring:
         db.session.delete(m)
 
