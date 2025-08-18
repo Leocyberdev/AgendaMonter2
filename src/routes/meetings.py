@@ -1,3 +1,4 @@
+
 from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, abort
 from flask_login import login_required, current_user
 from src.utils.email_utils import send_meeting_notification
@@ -17,7 +18,6 @@ from src.models.notification import Notification
 from src.forms import MeetingForm, EditMeetingForm
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
-from zoneinfo import ZoneInfo
 import pytz
 import json
 
@@ -41,7 +41,6 @@ def check_room_availability(room_id, start_datetime, end_datetime, exclude_meeti
     return len(conflicts) == 0, conflicts
 
 
-# --- FUNÇÃO CORRIGIDA COM PYTZ ---
 def create_recurring_meetings(base_meeting, fixed_start_time, fixed_end_time):
     if not base_meeting.is_recurring or not base_meeting.recurrence_type:
         return []
@@ -52,10 +51,8 @@ def create_recurring_meetings(base_meeting, fixed_start_time, fixed_end_time):
 
     created_meetings = []
 
-    # Garantir que estamos trabalhando com timezone do Brasil
     brazil_tz = pytz.timezone('America/Sao_Paulo')
     
-    # Converter para timezone do Brasil se necessário
     if base_meeting.start_datetime.tzinfo is None:
         base_start = brazil_tz.localize(base_meeting.start_datetime)
     else:
@@ -66,14 +63,12 @@ def create_recurring_meetings(base_meeting, fixed_start_time, fixed_end_time):
     end_hour, end_minute, end_second = fixed_end_time.hour, fixed_end_time.minute, fixed_end_time.second
 
     try:
-        # Garantir que a data de fim está no timezone correto
         if isinstance(base_meeting.recurrence_end, datetime):
             if base_meeting.recurrence_end.tzinfo is None:
                 end_date = brazil_tz.localize(base_meeting.recurrence_end)
             else:
                 end_date = base_meeting.recurrence_end.astimezone(brazil_tz)
         else:
-            # Se for apenas uma data, combinar com horário mínimo
             end_date = brazil_tz.localize(datetime.combine(
                 base_meeting.recurrence_end,
                 datetime.min.time()
@@ -103,7 +98,6 @@ def create_recurring_meetings(base_meeting, fixed_start_time, fixed_end_time):
                 if current_date.weekday() >= 5:  # pula sábado e domingo
                     continue
 
-            # Criar datetime com timezone correto
             new_start_datetime = brazil_tz.localize(datetime(
                 current_date.year, current_date.month, current_date.day,
                 start_hour, start_minute, start_second
@@ -140,7 +134,6 @@ def create_recurring_meetings(base_meeting, fixed_start_time, fixed_end_time):
     print(f"📅 Criando reuniões recorrentes...")
     print(f"✅ Processadas {iteration_count} iterações, criadas {len(created_meetings)} reuniões")
     return created_meetings
-# --- FIM DA FUNÇÃO CORRIGIDA ---
 
 
 def format_datetime_brazil(dt):
@@ -150,7 +143,6 @@ def format_datetime_brazil(dt):
     
     brazil_tz = pytz.timezone('America/Sao_Paulo')
     
-    # Garantir que o datetime tem timezone
     if dt.tzinfo is None:
         dt = brazil_tz.localize(dt)
     else:
@@ -192,7 +184,6 @@ def create_meeting():
     form = MeetingForm()
 
     if form.validate_on_submit():
-        # Guardar os horários originais do formulário antes de aplicar timezone
         original_start = form.start_datetime.data
         original_end = form.end_datetime.data
 
@@ -272,7 +263,6 @@ def create_meeting():
 
             if participant_emails:
                 try:
-                    # CORREÇÃO: Usar datetime com pytz ao invés de strftime
                     start_dt_brazil = format_datetime_brazil(new_meeting.start_datetime)
                     end_dt_brazil = format_datetime_brazil(new_meeting.end_datetime)
                     
@@ -377,7 +367,6 @@ def edit_meeting(meeting_id):
             form.room_id.data, start_time, end_time, exclude_meeting_id=meeting.id
         )
         if not is_available:
-            # CORREÇÃO: Usar datetime com pytz ao invés de strftime
             conflict_info = []
             for c in conflicts:
                 start_brazil = format_datetime_brazil(c.start_datetime)
@@ -407,36 +396,59 @@ def edit_meeting(meeting_id):
         meeting.room_id = form.room_id.data
         meeting.updated_at = get_brazil_now()
 
-        db.session.add(meeting)
-        db.session.commit()
-
         # Lógica para lidar com reuniões recorrentes
-        if meeting.is_recurring or meeting.parent_meeting_id:
-            # Se a reunião editada é uma ocorrência de uma série recorrente
+        if form.edit_all_recurring.data:
+            # Se o usuário optou por editar todas as ocorrências futuras
+            parent_meeting = meeting
             if meeting.parent_meeting_id:
                 parent_meeting = Meeting.query.get(meeting.parent_meeting_id)
-            else:
-                parent_meeting = meeting
+                # Se a reunião editada não é a principal, mas é uma ocorrência, precisamos atualizar a principal
+                if parent_meeting:
+                    parent_meeting.title = form.title.data
+                    parent_meeting.description = form.description.data
+                    parent_meeting.room_id = form.room_id.data
+                    parent_meeting.participants = participant_names
+                    parent_meeting.recurrence_type = form.recurrence_type.data
+                    parent_meeting.recurrence_end = form.recurrence_end.data
+                    db.session.add(parent_meeting)
 
-            if parent_meeting and (form.is_recurring.data or parent_meeting.is_recurring):
-                # Se a reunião original era recorrente ou está sendo feita recorrente
-                # Deletar todas as ocorrências futuras da série recorrente
-                Meeting.query.filter(
-                    Meeting.parent_meeting_id == parent_meeting.id,
-                    Meeting.start_datetime >= meeting.start_datetime # Deleta a partir da data de início da reunião editada
-                ).delete(synchronize_session=False)
-                db.session.commit()
+            # Deletar todas as ocorrências futuras da série recorrente (incluindo a atual se for a principal)
+            Meeting.query.filter(
+                (Meeting.parent_meeting_id == parent_meeting.id) | (Meeting.id == parent_meeting.id and parent_meeting.is_recurring),
+                Meeting.start_datetime >= meeting.start_datetime
+            ).delete(synchronize_session=False)
+            db.session.commit()
 
-                # Recriar as ocorrências futuras com base nas novas informações
-                # Usar os horários originais do formulário para a recorrência
-                original_start_time = form.start_datetime.data.time()
-                original_end_time = form.end_datetime.data.time()
+            # Recriar a reunião principal (se for o caso) e as ocorrências futuras com base nas novas informações
+            # A reunião principal precisa ser recriada para refletir as novas datas/horas/participantes
+            new_parent_meeting = Meeting(
+                title=form.title.data,
+                description=form.description.data,
+                room_id=form.room_id.data,
+                start_datetime=start_time,
+                end_datetime=end_time,
+                is_recurring=form.is_recurring.data,
+                recurrence_type=form.recurrence_type.data,
+                recurrence_end=form.recurrence_end.data,
+                created_by=current_user.id,
+                participants=participant_names,
+                created_at=get_brazil_now()
+            )
+            db.session.add(new_parent_meeting)
+            db.session.commit()
 
-                recurring_meetings = create_recurring_meetings(parent_meeting, original_start_time, original_end_time)
+            # Recriar as ocorrências futuras
+            if new_parent_meeting.is_recurring:
+                recurring_meetings = create_recurring_meetings(new_parent_meeting, start_time.time(), end_time.time())
                 if recurring_meetings:
                     db.session.add_all(recurring_meetings)
                     db.session.commit()
                     print(f"✅ Atualizadas {len(recurring_meetings)} reuniões recorrentes.")
+
+        else:
+            # Se o usuário optou por editar apenas esta ocorrência
+            db.session.add(meeting)
+            db.session.commit()
 
         flash("Reunião atualizada com sucesso!", "success")
         return redirect(url_for("meetings.dashboard"))
@@ -457,10 +469,7 @@ def cancel_meeting(meeting_id):
 
     recipients = [meeting.creator.email] + [user.email for user in meeting.participants_list]
 
-    # Se for uma reunião recorrente, perguntar se quer cancelar só esta ou todas
     if meeting.is_recurring or meeting.parent_meeting_id:
-        # Para simplificar, vamos cancelar todas as ocorrências futuras se for uma recorrente
-        # Em um cenário real, seria necessário um modal ou opção no formulário
         if meeting.parent_meeting_id:
             parent_meeting = Meeting.query.get(meeting.parent_meeting_id)
         else:
@@ -472,7 +481,6 @@ def cancel_meeting(meeting_id):
                 Meeting.start_datetime >= meeting.start_datetime
             ).delete(synchronize_session=False)
             db.session.commit()
-            # Deletar a própria reunião pai se for o caso
             if parent_meeting.id == meeting.id:
                 db.session.delete(parent_meeting)
                 db.session.commit()
@@ -482,7 +490,6 @@ def cancel_meeting(meeting_id):
             create_meeting_notifications(parent_meeting, 'cancelled', participants_only=True)
             return redirect(url_for('meetings.my_meetings'))
 
-    # Se não for recorrente ou se for a última ocorrência de uma série
     send_meeting_notification(meeting, 'cancelled', recipients=recipients)
     create_meeting_notifications(meeting, 'cancelled', participants_only=True)
 
@@ -512,7 +519,6 @@ def check_availability():
         
         conflict_list = []
         for conflict in conflicts:
-            # CORREÇÃO: Usar datetime com pytz ao invés de strftime
             start_brazil = format_datetime_brazil(conflict.start_datetime)
             end_brazil = format_datetime_brazil(conflict.end_datetime)
             conflict_list.append({
@@ -593,4 +599,6 @@ def delete_expired_meetings():
     db.session.commit()
     flash(f"{deleted_count} reuniões expiradas foram deletadas com sucesso.", "success")
     return redirect(url_for("meetings.dashboard"))
+
+
 
