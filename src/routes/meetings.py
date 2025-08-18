@@ -618,21 +618,54 @@ def check_availability():
 @meetings_bp.route('/cancel_recurrence/<int:meeting_id>', methods=['POST'])
 @login_required
 def cancel_recurrence(meeting_id):
-    original = Meeting.query.get_or_404(meeting_id)
-    
-    if original.created_by != current_user.id and not current_user.is_admin:
+    original = Meeting.query.get_or_404(meeti    if original.created_by != current_user.id and not current_user.is_admin:
         flash('Você não tem permissão para cancelar esta recorrência.', 'error')
         return redirect(url_for('meetings.my_meetings'))
 
-    recurring = Meeting.query.filter_by(parent_meeting_id=meeting_id).all()
-    
-    for m in recurring:
-        db.session.delete(m)
+    # Determinar se é uma reunião pai ou uma ocorrência individual
+    if original.is_recurring:
+        # Se for a reunião pai, cancela todas as ocorrências futuras
+        parent_meeting = original
+    elif original.parent_meeting_id:
+        # Se for uma ocorrência individual de uma série recorrente, cancela apenas ela
+        parent_meeting = None # Não é a reunião pai, então não afeta a série
+    else:
+        # Reunião individual não recorrente
+        parent_meeting = None
 
-    db.session.delete(original)
-    db.session.commit()
+    if parent_meeting:
+        # Cancelar todas as ocorrências futuras da reunião recorrente
+        Meeting.query.filter(
+            Meeting.parent_meeting_id == parent_meeting.id,
+            Meeting.start_datetime >= original.start_datetime
+        ).delete(synchronize_session=False)
+        db.session.commit()
 
-    flash(f'Recorrência de "{original.title}" cancelada com sucesso!', 'success')
+        # Se a reunião original for a própria reunião pai, deleta ela também
+        if original.id == parent_meeting.id:
+            db.session.delete(original)
+            db.session.commit()
+
+        flash(f'Todas as ocorrências futuras da reunião "{original.title}" foram canceladas!', 'success')
+        # Enviar notificação de cancelamento para a reunião pai e suas ocorrências
+        participant_names = original.participants.split(', ') if original.participants else []
+        participant_emails = [user.email for user in User.query.filter(User.username.in_(participant_names)).all() if user.email]
+        recipients = participant_emails + [original.creator.email]
+        send_meeting_notification(original, 'cancelled', recipients=recipients)
+        create_meeting_notifications(original, 'cancelled', participants_only=True)
+
+    else:
+        # Cancelar uma reunião individual (seja ela recorrente ou não)
+        db.session.delete(original)
+        db.session.commit()
+        flash(f'Reunião "{original.title}" cancelada com sucesso!', 'success')
+        # Enviar notificação de cancelamento para a reunião individual
+        participant_names = original.participants.split(', ') if original.participants else []
+        participant_emails = [user.email for user in User.query.filter(User.username.in_(participant_names)).all() if user.email]
+        recipients = participant_emails + [original.creator.email]
+        send_meeting_notification(original, 'cancelled', recipients=recipients)
+        create_meeting_notifications(original, 'cancelled', participants_only=True)
+
     return redirect(url_for('meetings.my_meetings'))
 
 
