@@ -50,13 +50,17 @@ def create_recurring_meetings(base_meeting):
         return []
 
     created_meetings = []
-    # Garante que a data base para o início da recorrência seja a data da reunião principal
+
+    # Pegamos data inicial e horários fixos da reunião original
     current_date = base_meeting.start_datetime.date()
-    start_time_of_day = base_meeting.start_datetime.time()
-    end_time_of_day = base_meeting.end_datetime.time()
+    start_hour = base_meeting.start_datetime.hour
+    start_minute = base_meeting.start_datetime.minute
+    start_second = base_meeting.start_datetime.second
+    end_hour = base_meeting.end_datetime.hour
+    end_minute = base_meeting.end_datetime.minute
+    end_second = base_meeting.end_datetime.second
 
     try:
-        # Garante que a data final da recorrência seja "aware" para comparação
         end_date = datetime.combine(
             base_meeting.recurrence_end,
             datetime.min.time(),
@@ -66,10 +70,9 @@ def create_recurring_meetings(base_meeting):
         print(f"❌ Erro ao processar data de fim da recorrência: {e}")
         return []
 
-    max_iterations = 100  # Limite de segurança
+    max_iterations = 100
     iteration_count = 0
 
-    # O loop agora começa a partir do dia seguinte à reunião principal
     while iteration_count < max_iterations:
         iteration_count += 1
 
@@ -81,20 +84,24 @@ def create_recurring_meetings(base_meeting):
             elif base_meeting.recurrence_type == 'monthly':
                 current_date += relativedelta(months=1)
 
-            # Cria o novo datetime já com o fuso horário correto para comparação
-            new_start_datetime_check = datetime.combine(current_date, start_time_of_day, tzinfo=BRAZIL_TZ)
-
-            if new_start_datetime_check.date() > end_date.date():
-               break
+            if current_date > end_date.date():
+                break
 
             if base_meeting.recurrence_type == 'daily':
-                if current_date.weekday() >= 5:  # 5=sábado, 6=domingo
+                if current_date.weekday() >= 5:  # pula sábado e domingo
                     continue
-            
-            # CORREÇÃO PRINCIPAL:
-            # Criar os novos datetimes combinando data, hora e o fuso horário em uma única etapa.
-            new_start_datetime = datetime.combine(current_date, start_time_of_day, tzinfo=BRAZIL_TZ)
-            new_end_datetime = datetime.combine(current_date, end_time_of_day, tzinfo=BRAZIL_TZ)
+
+            # Agora fixamos os horários da reunião original
+            new_start_datetime = datetime(
+                current_date.year, current_date.month, current_date.day,
+                start_hour, start_minute, start_second,
+                tzinfo=BRAZIL_TZ
+            )
+            new_end_datetime = datetime(
+                current_date.year, current_date.month, current_date.day,
+                end_hour, end_minute, end_second,
+                tzinfo=BRAZIL_TZ
+            )
 
             is_available, _ = check_room_availability(
                 base_meeting.room_id, new_start_datetime, new_end_datetime
@@ -110,7 +117,7 @@ def create_recurring_meetings(base_meeting):
                     room_id=base_meeting.room_id,
                     created_by=base_meeting.created_by,
                     parent_meeting_id=base_meeting.id,
-                    is_recurring=False, # Reuniões filhas não são recorrentes por si só
+                    is_recurring=False,
                     created_at=get_brazil_now()
                 )
                 db.session.add(new_meeting)
@@ -126,26 +133,26 @@ def create_recurring_meetings(base_meeting):
 # --- FIM DA FUNÇÃO CORRIGIDA ---
 
 
-@meetings_bp.route("/dashboard")
+@meetings_bp.route('/dashboard')
 @login_required
 def dashboard():
     now_brazil = get_brazil_now()
 
     upcoming_meetings = Meeting.query.filter(
         Meeting.start_datetime >= now_brazil,
-        (Meeting.created_by == current_user.id) | (Meeting.participants.like(f"%{current_user.username}%"))
+        (Meeting.created_by == current_user.id) | (Meeting.participants.like(f'%{current_user.username}%'))
     ).order_by(Meeting.start_datetime).limit(5).all()
 
     today = now_brazil.date()
     today_meetings = Meeting.query.filter(
         db.func.date(Meeting.start_datetime) == today,
-        (Meeting.created_by == current_user.id) | (Meeting.participants.like(f"%{current_user.username}%"))
+        (Meeting.created_by == current_user.id) | (Meeting.participants.like(f'%{current_user.username}%'))
     ).order_by(Meeting.start_datetime).all()
 
     notifications = get_user_notifications(current_user.id, unread_only=False, limit=5)
     unread_count = get_unread_count(current_user.id)
 
-    return render_template("meetings/dashboard.html",
+    return render_template('meetings/dashboard.html',
                            upcoming_meetings=upcoming_meetings,
                            today_meetings=today_meetings,
                            notifications=notifications,
@@ -276,10 +283,10 @@ Sistema de Reuniões - Monter Elétrica
 
     users = User.query.all()
     rooms = Room.query.all()
-    return render_template("meetings/create.html", user=user, rooms=rooms, form=form)
+    return render_template('meetings/create.html', user=user, rooms=rooms, form=form)
 
 
-@meetings_bp.route("/my_meetings")
+@meetings_bp.route('/my_meetings')
 @login_required
 def my_meetings():
     my_meetings = Meeting.query.filter_by(
@@ -295,35 +302,35 @@ def my_meetings():
             meeting.created_at = ensure_timezone_aware(meeting.created_at)
 
     return render_template(
-        "meetings/my_meetings.html",
+        'meetings/my_meetings.html',
         meetings=my_meetings,
         current_time=current_time
     )
 
 
-@meetings_bp.route("/calendar")
+@meetings_bp.route('/calendar')
 @login_required
 def calendar():
     meetings = Meeting.query.order_by(Meeting.start_datetime).all()
     calendar_events = [{
-        "id": m.id,
-        "title": m.title,
-        "start": m.start_datetime.isoformat(),
-        "end": m.end_datetime.isoformat(),
-        "room": m.room.name,
-        "creator": m.creator.username
+        'id': m.id,
+        'title': m.title,
+        'start': m.start_datetime.isoformat(),
+        'end': m.end_datetime.isoformat(),
+        'room': m.room.name,
+        'creator': m.creator.username
     } for m in meetings]
 
-    return render_template("meetings/calendar.html", events=json.dumps(calendar_events))
+    return render_template('meetings/calendar.html', events=json.dumps(calendar_events))
 
 
-@meetings_bp.route("/edit/<int:meeting_id>", methods=["GET", "POST"])
+@meetings_bp.route('/edit/<int:meeting_id>', methods=['GET', 'POST'])
 @login_required
 def edit_meeting(meeting_id):
     meeting = Meeting.query.get_or_404(meeting_id)
     if meeting.created_by != current_user.id and not current_user.is_admin:
-        flash("Você não tem permissão para editar esta reunião.", "error")
-        return redirect(url_for("meetings.my_meetings"))
+        flash('Você não tem permissão para editar esta reunião.', 'error')
+        return redirect(url_for('meetings.my_meetings'))
 
     form = EditMeetingForm(obj=meeting)
     if form.validate_on_submit():
@@ -359,12 +366,12 @@ def edit_meeting(meeting_id):
 
         db.session.commit()
         flash(f'Reunião "{meeting.title}" atualizada com sucesso!', 'success')
-        return redirect(url_for("meetings.my_meetings"))
+        return redirect(url_for('meetings.my_meetings'))
 
-    return render_template("meetings/edit.html", form=form, meeting=meeting)
+    return render_template('meetings/edit.html', form=form, meeting=meeting)
 
 
-@meetings_bp.route("/delete/<int:meeting_id>", methods=["POST"])
+@meetings_bp.route('/delete/<int:meeting_id>', methods=['POST'])
 @login_required
 def delete_meeting(meeting_id):
     meeting = db.session.get(Meeting, meeting_id)
@@ -372,8 +379,8 @@ def delete_meeting(meeting_id):
         abort(404)
 
     if meeting.created_by != current_user.id and not current_user.is_admin:
-        flash("Você não tem permissão para deletar esta reunião.", "error")
-        return redirect(url_for("meetings.my_meetings"))
+        flash('Você não tem permissão para deletar esta reunião.', 'error')
+        return redirect(url_for('meetings.my_meetings'))
 
     child_meetings = db.session.query(Meeting).filter_by(parent_meeting_id=meeting.id).all()
     for child in child_meetings:
@@ -384,26 +391,26 @@ def delete_meeting(meeting_id):
         for user in db.session.query(User).filter(User.username.in_(meeting.get_participants_list())).all()
         if user.email
     ]
-    send_meeting_notification(meeting, "cancelled", recipients=recipients)
-    create_meeting_notifications(meeting, "cancelled", participants_only=True)
+    send_meeting_notification(meeting, 'cancelled', recipients=recipients)
+    create_meeting_notifications(meeting, 'cancelled', participants_only=True)
 
     db.session.delete(meeting)
     db.session.commit()
 
     flash(f'Reunião "{meeting.title}" cancelada com sucesso!', 'success')
-    return redirect(url_for("meetings.my_meetings"))
+    return redirect(url_for('meetings.my_meetings'))
 
 
-@meetings_bp.route("/api/check_availability")
+@meetings_bp.route('/api/check_availability')
 @login_required
 def check_availability():
-    room_id = request.args.get("room_id", type=int)
-    start_datetime = request.args.get("start_datetime")
-    end_datetime = request.args.get("end_datetime")
-    exclude_meeting_id = request.args.get("exclude_meeting_id", type=int)
+    room_id = request.args.get('room_id', type=int)
+    start_datetime = request.args.get('start_datetime')
+    end_datetime = request.args.get('end_datetime')
+    exclude_meeting_id = request.args.get('exclude_meeting_id', type=int)
 
     if not all([room_id, start_datetime, end_datetime]):
-        return jsonify({"error": "Parâmetros obrigatórios não fornecidos"}), 400
+        return jsonify({'error': 'Parâmetros obrigatórios não fornecidos'}), 400
 
     try:
         start_dt = datetime.fromisoformat(start_datetime)
@@ -415,18 +422,18 @@ def check_availability():
         is_available, conflicts = check_room_availability(room_id, start_dt, end_dt, exclude_meeting_id)
 
         conflict_details = [{
-            "title": c.title,
-            "start": c.start_datetime.isoformat(),
-            "end": c.end_datetime.isoformat()
+            'title': c.title,
+            'start': c.start_datetime.isoformat(),
+            'end': c.end_datetime.isoformat()
         } for c in conflicts]
 
-        return jsonify({"available": is_available, "conflicts": conflict_details})
+        return jsonify({'available': is_available, 'conflicts': conflict_details})
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 400
+        return jsonify({'error': str(e)}), 400
 
 
-@meetings_bp.route("/api/meeting_details/<int:meeting_id>")
+@meetings_bp.route('/api/meeting_details/<int:meeting_id>')
 @login_required
 def meeting_details(meeting_id):
     meeting = Meeting.query.get_or_404(meeting_id)
@@ -435,29 +442,29 @@ def meeting_details(meeting_id):
     end_dt = ensure_timezone_aware(meeting.end_datetime)
 
     return jsonify({
-        "id": meeting.id,
-        "title": meeting.title,
-        "description": meeting.description,
-        "start_datetime": start_dt.isoformat(),
-        "end_datetime": end_dt.isoformat(),
-        "participants": meeting.participants,
-        "room_name": meeting.room.name,
-        "creator_name": meeting.creator.username,
-        "is_recurring": meeting.is_recurring,
-        "recurrence_type": meeting.recurrence_type,
-        "recurrence_end": meeting.recurrence_end.isoformat() if meeting.recurrence_end else None,
-        "parent_meeting_id": meeting.parent_meeting_id
+        'id': meeting.id,
+        'title': meeting.title,
+        'description': meeting.description,
+        'start_datetime': start_dt.isoformat(),
+        'end_datetime': end_dt.isoformat(),
+        'participants': meeting.participants,
+        'room_name': meeting.room.name,
+        'creator_name': meeting.creator.username,
+        'is_recurring': meeting.is_recurring,
+        'recurrence_type': meeting.recurrence_type,
+        'recurrence_end': meeting.recurrence_end.isoformat() if meeting.recurrence_end else None,
+        'parent_meeting_id': meeting.parent_meeting_id
     })
 
 
-@meetings_bp.route("/api/suggest_rooms")
+@meetings_bp.route('/api/suggest_rooms')
 @login_required
 def suggest_rooms():
-    start_datetime = request.args.get("start_datetime")
-    end_datetime = request.args.get("end_datetime")
+    start_datetime = request.args.get('start_datetime')
+    end_datetime = request.args.get('end_datetime')
 
     if not all([start_datetime, end_datetime]):
-        return jsonify({"error": "Parâmetros obrigatórios não fornecidos"}), 400
+        return jsonify({'error': 'Parâmetros obrigatórios não fornecidos'}), 400
 
     try:
         start_dt = datetime.fromisoformat(start_datetime)
@@ -474,20 +481,20 @@ def suggest_rooms():
             if is_available:
                 available_rooms.append(room.to_dict())
 
-        return jsonify({"available_rooms": available_rooms})
+        return jsonify({'available_rooms': available_rooms})
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 400
+        return jsonify({'error': str(e)}), 400
 
 
-@meetings_bp.route("/delete_series/<int:parent_id>", methods=["POST"])
+@meetings_bp.route('/delete_series/<int:parent_id>', methods=['POST'])
 @login_required
 def delete_recurring_series(parent_id):
     original = Meeting.query.get_or_404(parent_id)
 
     if original.created_by != current_user.id and not current_user.is_admin:
-        flash("Você não tem permissão para deletar esta série de reuniões.", "error")
-        return redirect(url_for("meetings.my_meetings"))
+        flash('Você não tem permissão para deletar esta série de reuniões.', 'error')
+        return redirect(url_for('meetings.my_meetings'))
 
     recurring = Meeting.query.filter_by(parent_meeting_id=parent_id).all()
 
@@ -498,7 +505,7 @@ def delete_recurring_series(parent_id):
     db.session.commit()
 
     flash(f'Recorrência de "{original.title}" cancelada com sucesso!', 'success')
-    return redirect(url_for("meetings.my_meetings"))
+    return redirect(url_for('meetings.my_meetings'))
 
 
 def check_user_availability(user_ids, start_datetime, end_datetime, exclude_meeting_id=None):
@@ -512,7 +519,7 @@ def check_user_availability(user_ids, start_datetime, end_datetime, exclude_meet
         query = Meeting.query.filter(
             Meeting.start_datetime < end_datetime,
             Meeting.end_datetime > start_datetime,
-            (Meeting.created_by == user.id) | (Meeting.participants.like(f"%{user.username}%"))
+            (Meeting.created_by == user.id) | (Meeting.participants.like(f'%{user.username}%'))
         )
         if exclude_meeting_id:
             query = query.filter(Meeting.id != exclude_meeting_id)
