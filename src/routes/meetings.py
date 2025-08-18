@@ -41,7 +41,7 @@ def check_room_availability(room_id, start_datetime, end_datetime, exclude_meeti
 
 
 # --- FUNÇÃO CORRIGIDA ---
-def create_recurring_meetings(base_meeting):
+def create_recurring_meetings(base_meeting, fixed_start_time, fixed_end_time):
     if not base_meeting.is_recurring or not base_meeting.recurrence_type:
         return []
 
@@ -51,14 +51,10 @@ def create_recurring_meetings(base_meeting):
 
     created_meetings = []
 
-    # Pegamos data inicial e horários fixos da reunião original
+    # Usamos os horários originais passados da view
     current_date = base_meeting.start_datetime.date()
-    start_hour = base_meeting.start_datetime.hour
-    start_minute = base_meeting.start_datetime.minute
-    start_second = base_meeting.start_datetime.second
-    end_hour = base_meeting.end_datetime.hour
-    end_minute = base_meeting.end_datetime.minute
-    end_second = base_meeting.end_datetime.second
+    start_hour, start_minute, start_second = fixed_start_time.hour, fixed_start_time.minute, fixed_start_time.second
+    end_hour, end_minute, end_second = fixed_end_time.hour, fixed_end_time.minute, fixed_end_time.second
 
     try:
         end_date = datetime.combine(
@@ -91,7 +87,7 @@ def create_recurring_meetings(base_meeting):
                 if current_date.weekday() >= 5:  # pula sábado e domingo
                     continue
 
-            # Agora fixamos os horários da reunião original
+            # Fixamos os horários originais
             new_start_datetime = datetime(
                 current_date.year, current_date.month, current_date.day,
                 start_hour, start_minute, start_second,
@@ -166,12 +162,13 @@ def create_meeting():
     form = MeetingForm()
 
     if form.validate_on_submit():
-        start_time = form.start_datetime.data
-        end_time = form.end_datetime.data
-        room_id = form.room_id.data
+        # Guardar os horários originais do formulário antes de aplicar timezone
+        original_start = form.start_datetime.data
+        original_end = form.end_datetime.data
 
-        start_time = make_timezone_aware(start_time, BRAZIL_TZ)
-        end_time = make_timezone_aware(end_time, BRAZIL_TZ)
+        start_time = make_timezone_aware(original_start, BRAZIL_TZ)
+        end_time = make_timezone_aware(original_end, BRAZIL_TZ)
+        room_id = form.room_id.data
 
         if is_in_past(start_time):
             flash("A data e hora de início não pode ser no passado.", "danger")
@@ -226,7 +223,7 @@ def create_meeting():
 
         if new_meeting.is_recurring:
             try:
-                recurring_meetings = create_recurring_meetings(new_meeting)
+                recurring_meetings = create_recurring_meetings(new_meeting, original_start.time(), original_end.time())
                 if recurring_meetings:
                     db.session.commit()
                     all_meetings.extend(recurring_meetings)
@@ -247,7 +244,8 @@ def create_meeting():
                 try:
                     if new_meeting.is_recurring:
                         subject_suffix = f" (Recorrente até {new_meeting.recurrence_end.strftime('%d/%m/%Y')})"
-                        body_suffix = f"\nEsta é uma reunião recorrente que se repete {new_meeting.recurrence_type} até {new_meeting.recurrence_end.strftime('%d/%m/%Y')}."
+                        body_suffix = f"
+Esta é uma reunião recorrente que se repete {new_meeting.recurrence_type} até {new_meeting.recurrence_end.strftime('%d/%m/%Y')}."
                     else:
                         subject_suffix = ""
                         body_suffix = ""
@@ -280,6 +278,10 @@ Sistema de Reuniões - Monter Elétrica
 
         flash("Reunião agendada com sucesso!", "success")
         return redirect(url_for("meetings.dashboard"))
+
+    users = User.query.all()
+    rooms = Room.query.all()
+    return render_template('meetings/create.html', user=user, rooms=rooms, form=form)
 
     users = User.query.all()
     rooms = Room.query.all()
