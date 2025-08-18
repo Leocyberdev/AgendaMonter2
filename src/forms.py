@@ -82,6 +82,10 @@ class MeetingForm(FlaskForm):
 
 # --- Editar Reunião ---
 class EditMeetingForm(MeetingForm):
+    edit_all_recurring = SelectField('Aplicar edição a:', choices=[
+        ('this_only', 'Apenas esta reunião'),
+        ('all_recurring', 'Todas as reuniões da série')
+    ], validators=[Optional()])
     submit = SubmitField('Atualizar Reunião')
 
     def __init__(self, *args, **kwargs):
