@@ -369,16 +369,59 @@ def edit_meeting(meeting_id):
         selected_users = User.query.filter(User.id.in_(participant_ids)).all()
         participant_names = ", ".join([user.username for user in selected_users])
 
-        meeting.title = form.title.data
-        meeting.description = form.description.data
-        meeting.start_datetime = start_time
-        meeting.end_datetime = end_time
-        meeting.participants = participant_names
-        meeting.room_id = form.room_id.data
-        meeting.updated_at = get_brazil_now()
+        # Verifica se deve editar todas as reuniões recorrentes ou apenas esta
+        edit_all = form.edit_all_recurring.data if meeting.is_recurring else 'this_only'
+        
+        if edit_all == 'all_recurring' and meeting.is_recurring:
+            # Editar todas as reuniões da série recorrente
+            meetings_to_update = [meeting]  # Inclui a reunião principal
+            child_meetings = Meeting.query.filter_by(parent_meeting_id=meeting.id).all()
+            meetings_to_update.extend(child_meetings)
+            
+            # Calcula a diferença de tempo para aplicar às reuniões filhas
+            time_diff = start_time - meeting.start_datetime
+            
+            for meeting_to_update in meetings_to_update:
+                if meeting_to_update.id == meeting.id:
+                    # Reunião principal - aplica os novos valores diretamente
+                    meeting_to_update.title = form.title.data
+                    meeting_to_update.description = form.description.data
+                    meeting_to_update.start_datetime = start_time
+                    meeting_to_update.end_datetime = end_time
+                    meeting_to_update.participants = participant_names
+                    meeting_to_update.room_id = form.room_id.data
+                else:
+                    # Reuniões filhas - aplica a diferença de tempo
+                    new_start = meeting_to_update.start_datetime + time_diff
+                    new_end = meeting_to_update.end_datetime + time_diff
+                    
+                    # Verifica disponibilidade da sala para cada reunião filha
+                    is_child_available, _ = check_room_availability(
+                        form.room_id.data, new_start, new_end, exclude_meeting_id=meeting_to_update.id
+                    )
+                    
+                    if is_child_available:
+                        meeting_to_update.title = form.title.data
+                        meeting_to_update.description = form.description.data
+                        meeting_to_update.start_datetime = new_start
+                        meeting_to_update.end_datetime = new_end
+                        meeting_to_update.participants = participant_names
+                        meeting_to_update.room_id = form.room_id.data
+                    else:
+                        flash(f"Conflito de sala para reunião em {new_start.strftime('%d/%m/%Y %H:%M')}. Esta reunião não foi alterada.", "warning")
+            
+            flash(f'Série de reuniões "{meeting.title}" atualizada com sucesso!', 'success')
+        else:
+            # Editar apenas esta reunião
+            meeting.title = form.title.data
+            meeting.description = form.description.data
+            meeting.start_datetime = start_time
+            meeting.end_datetime = end_time
+            meeting.participants = participant_names
+            meeting.room_id = form.room_id.data
+            flash(f'Reunião "{meeting.title}" atualizada com sucesso!', 'success')
 
         db.session.commit()
-        flash(f'Reunião "{meeting.title}" atualizada com sucesso!', 'success')
         return redirect(url_for('meetings.my_meetings'))
 
     return render_template('meetings/edit.html', form=form, meeting=meeting)
