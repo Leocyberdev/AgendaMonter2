@@ -398,6 +398,7 @@ def edit_meeting(meeting_id):
         selected_users = User.query.filter(User.id.in_(participant_ids)).all()
         participant_names = ", ".join([user.username for user in selected_users])
 
+        # Atualizar os dados da reunião
         meeting.title = form.title.data
         meeting.description = form.description.data
         meeting.start_datetime = start_time
@@ -406,33 +407,82 @@ def edit_meeting(meeting_id):
         meeting.room_id = form.room_id.data
         meeting.updated_at = get_brazil_now()
 
+        db.session.add(meeting)
         db.session.commit()
-        flash(f'Reunião "{meeting.title}" atualizada com sucesso!', 'success')
-        return redirect(url_for('meetings.my_meetings'))
 
-    return render_template('meetings/edit.html', form=form, meeting=meeting)
+        # Lógica para lidar com reuniões recorrentes
+        if meeting.is_recurring or meeting.parent_meeting_id:
+            # Se a reunião editada é uma ocorrência de uma série recorrente
+            if meeting.parent_meeting_id:
+                parent_meeting = Meeting.query.get(meeting.parent_meeting_id)
+            else:
+                parent_meeting = meeting
+
+            if parent_meeting and (form.is_recurring.data or parent_meeting.is_recurring):
+                # Se a reunião original era recorrente ou está sendo feita recorrente
+                # Deletar todas as ocorrências futuras da série recorrente
+                Meeting.query.filter(
+                    Meeting.parent_meeting_id == parent_meeting.id,
+                    Meeting.start_datetime >= meeting.start_datetime # Deleta a partir da data de início da reunião editada
+                ).delete(synchronize_session=False)
+                db.session.commit()
+
+                # Recriar as ocorrências futuras com base nas novas informações
+                # Usar os horários originais do formulário para a recorrência
+                original_start_time = form.start_datetime.data.time()
+                original_end_time = form.end_datetime.data.time()
+
+                recurring_meetings = create_recurring_meetings(parent_meeting, original_start_time, original_end_time)
+                if recurring_meetings:
+                    db.session.add_all(recurring_meetings)
+                    db.session.commit()
+                    print(f"✅ Atualizadas {len(recurring_meetings)} reuniões recorrentes.")
+
+        flash("Reunião atualizada com sucesso!", "success")
+        return redirect(url_for("meetings.dashboard"))
+
+    users = User.query.all()
+    rooms = Room.query.all()
+    form.participants.data = [user.id for user in meeting.participants_list]
+    return render_template("meetings/edit.html", form=form, meeting=meeting, users=users, rooms=rooms)
 
 
-@meetings_bp.route('/delete/<int:meeting_id>', methods=['POST'])
+@meetings_bp.route("/cancel_meeting/<int:meeting_id>", methods=["POST"])
 @login_required
-def delete_meeting(meeting_id):
-    meeting = db.session.get(Meeting, meeting_id)
-    if not meeting:
-        abort(404)
-
+def cancel_meeting(meeting_id):
+    meeting = Meeting.query.get_or_404(meeting_id)
     if meeting.created_by != current_user.id and not current_user.is_admin:
-        flash('Você não tem permissão para deletar esta reunião.', 'error')
-        return redirect(url_for('meetings.my_meetings'))
+        flash("Você não tem permissão para cancelar esta reunião.", "error")
+        return redirect(url_for("meetings.my_meetings"))
 
-    child_meetings = db.session.query(Meeting).filter_by(parent_meeting_id=meeting.id).all()
-    for child in child_meetings:
-        db.session.delete(child)
+    recipients = [meeting.creator.email] + [user.email for user in meeting.participants_list]
 
-    recipients = [
-        user.email
-        for user in db.session.query(User).filter(User.username.in_(meeting.get_participants_list())).all()
-        if user.email
-    ]
+    # Se for uma reunião recorrente, perguntar se quer cancelar só esta ou todas
+    if meeting.is_recurring or meeting.parent_meeting_id:
+        # Para simplificar, vamos cancelar todas as ocorrências futuras se for uma recorrente
+        # Em um cenário real, seria necessário um modal ou opção no formulário
+        if meeting.parent_meeting_id:
+            parent_meeting = Meeting.query.get(meeting.parent_meeting_id)
+        else:
+            parent_meeting = meeting
+
+        if parent_meeting:
+            Meeting.query.filter(
+                Meeting.parent_meeting_id == parent_meeting.id,
+                Meeting.start_datetime >= meeting.start_datetime
+            ).delete(synchronize_session=False)
+            db.session.commit()
+            # Deletar a própria reunião pai se for o caso
+            if parent_meeting.id == meeting.id:
+                db.session.delete(parent_meeting)
+                db.session.commit()
+
+            flash(f'Todas as ocorrências futuras da reunião "{parent_meeting.title}" foram canceladas!', 'success')
+            send_meeting_notification(parent_meeting, 'cancelled', recipients=recipients)
+            create_meeting_notifications(parent_meeting, 'cancelled', participants_only=True)
+            return redirect(url_for('meetings.my_meetings'))
+
+    # Se não for recorrente ou se for a última ocorrência de uma série
     send_meeting_notification(meeting, 'cancelled', recipients=recipients)
     create_meeting_notifications(meeting, 'cancelled', participants_only=True)
 
