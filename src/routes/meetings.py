@@ -87,8 +87,13 @@ def create_recurring_meetings(base_meeting):
             if base_meeting.recurrence_type == 'daily':
                 if current_date.weekday() >= 5:  # 5=sábado, 6=domingo
                     continue
-            new_start_datetime = BRAZIL_TZ.localize(datetime.combine(current_date, start_time_of_day))
-            new_end_datetime = BRAZIL_TZ.localize(datetime.combine(current_date, end_time_of_day))
+            # Criar os novos datetimes mantendo o mesmo horário da reunião principal
+            new_start_datetime = datetime.combine(current_date, start_time_of_day)
+            new_end_datetime = datetime.combine(current_date, end_time_of_day)
+            
+            # Aplicar o timezone do Brasil de forma correta
+            new_start_datetime = make_timezone_aware(new_start_datetime, BRAZIL_TZ)
+            new_end_datetime = make_timezone_aware(new_end_datetime, BRAZIL_TZ)
 
             is_available, _ = check_room_availability(
                 base_meeting.room_id, new_start_datetime, new_end_datetime
