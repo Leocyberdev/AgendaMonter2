@@ -455,7 +455,7 @@ def cancel_meeting(meeting_id):
         flash("Você não tem permissão para cancelar esta reunião.", "error")
         return redirect(url_for("meetings.my_meetings"))
 
-    recipients = [meeting.creator.email] + [user.email for user in meeting.participants_list]
+    recipients = [meeting.creator.email] + meeting.get_participants_list()
 
     # Se for uma reunião recorrente, perguntar se quer cancelar só esta ou todas
     if meeting.is_recurring or meeting.parent_meeting_id:
