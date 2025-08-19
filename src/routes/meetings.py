@@ -544,7 +544,46 @@ def check_room_availability_ajax():
         return jsonify({'available': False, 'error': str(e)})
 
 
-@meetings_bp.route('/cancel_recurrence/<int:meeting_id>', methods=['POST'])
+
+@meetings_bp.route("/delete/<int:meeting_id>", methods=["POST"])
+@login_required
+def delete_meeting(meeting_id):
+    print(f"DEBUG: Tentando excluir reunião para meeting_id: {meeting_id}")
+    meeting = Meeting.query.get_or_404(meeting_id)
+    print(f"DEBUG: Reunião encontrada: {meeting.title} (ID: {meeting.id})")
+    
+    if meeting.created_by != current_user.id and not current_user.is_admin:
+        print(f"DEBUG: Usuário {current_user.id} sem permissão para excluir a reunião {meeting_id}")
+        flash("Você não tem permissão para excluir esta reunião.", "error")
+        return redirect(url_for("meetings.my_meetings"))
+
+    try:
+        # Se for uma reunião recorrente (pai), excluir todas as filhas também
+        if meeting.is_recurring:
+            print(f"DEBUG: Buscando reuniões recorrentes filhas para parent_meeting_id: {meeting_id}")
+            recurring = Meeting.query.filter_by(parent_meeting_id=meeting_id).all()
+            print(f"DEBUG: Encontradas {len(recurring)} reuniões filhas.")
+            
+            for m in recurring:
+                print(f"DEBUG: Deletando reunião filha: {m.title} (ID: {m.id})")
+                db.session.delete(m)
+
+        print(f"DEBUG: Deletando reunião: {meeting.title} (ID: {meeting.id})")
+        db.session.delete(meeting)
+        db.session.commit()
+        print(f"DEBUG: Commit realizado. Reunião '{meeting.title}' excluída com sucesso!")
+
+        flash(f'Reunião "{meeting.title}" excluída com sucesso!', 'success')
+        return redirect(url_for('meetings.my_meetings'))
+        
+    except Exception as e:
+        print(f"DEBUG: Erro ao excluir reunião: {str(e)}")
+        db.session.rollback()
+        flash(f'Erro ao excluir reunião: {str(e)}', 'error')
+        return redirect(url_for('meetings.my_meetings'))
+
+
+@meetings_bp.route("/cancel_recurrence/<int:meeting_id>", methods=["POST"])
 @login_required
 def cancel_recurrence(meeting_id):
     print(f"DEBUG: Tentando cancelar recorrência para meeting_id: {meeting_id}")
