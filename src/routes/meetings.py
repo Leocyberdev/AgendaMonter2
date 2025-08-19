@@ -618,7 +618,8 @@ def check_availability():
 @meetings_bp.route('/cancel_recurrence/<int:meeting_id>', methods=['POST'])
 @login_required
 def cancel_recurrence(meeting_id):
-    original = Meeting.query.get_or_404(meeti    if original.created_by != current_user.id and not current_user.is_admin:
+    original = Meeting.query.get_or_404(meeting_id)
+    if original.created_by != current_user.id and not current_user.is_admin:
         flash('Você não tem permissão para cancelar esta recorrência.', 'error')
         return redirect(url_for('meetings.my_meetings'))
 
