@@ -126,9 +126,23 @@
                             
                             <div class="d-flex justify-content-between">
                                 <a href="{{ url_for('meetings.my_meetings') }}" class="btn btn-secondary">
-                                    <i class="bi bi-arrow-left me-1"></i>Cancelar
+                                    <i class="bi bi-arrow-left me-1"></i>Voltar
                                 </a>
-                                {{ form.submit(class="btn btn-warning") }}
+                                
+                                <div>
+                                    <!-- Botão de cancelar reunião -->
+                                    <form method="POST" 
+                                          action="{{ url_for('meetings.cancel_meeting', meeting_id=meeting.id) }}" 
+                                          style="display:inline;">
+                                        <button type="submit" class="btn btn-danger"
+                                                onclick="return confirm('Tem certeza que deseja cancelar esta reunião? Se for recorrente, todas as futuras também serão canceladas.')">
+                                            <i class="bi bi-x-circle me-1"></i> Cancelar Reunião
+                                        </button>
+                                    </form>
+
+                                    <!-- Botão de salvar alterações -->
+                                    {{ form.submit(class="btn btn-warning") }}
+                                </div>
                             </div>
                         </form>
                     </div>
@@ -268,4 +282,3 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 </script>
 {% endblock %}
-
