@@ -207,7 +207,8 @@
 <script>
 function confirmDelete(meetingId, meetingTitle) {
     document.getElementById('meetingTitle').textContent = meetingTitle;
-    document.getElementById('deleteForm').action = `/meetings/delete/${meetingId}`;
+    // 🔧 corrigido para usar a rota existente
+    document.getElementById('deleteForm').action = `/meetings/cancel_meeting/${meetingId}`;
     const modal = new bootstrap.Modal(document.getElementById('deleteModal'));
     modal.show();
 }
