@@ -501,7 +501,7 @@ Sistema de Reuniões - Monter Elétrica
     form.room_id.data = meeting.room_id
     form.start_datetime.data = format_datetime_for_input(meeting.start_datetime)
     form.end_datetime.data = format_datetime_for_input(meeting.end_datetime)
-    form.participants.data = [user.id for user in meeting.get_participants_as_users()]
+    form.participants.data = [user.id for user in User.query.filter(User.username.in_(meeting.participants.split(', '))).all()]
 
     users = User.query.all()
     rooms = Room.query.all()
